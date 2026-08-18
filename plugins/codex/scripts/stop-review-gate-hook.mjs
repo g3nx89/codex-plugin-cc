@@ -12,6 +12,8 @@ import { getConfig, listJobs } from "./lib/state.mjs";
 import { sortJobsNewestFirst } from "./lib/job-control.mjs";
 import { SESSION_ID_ENV } from "./lib/tracked-jobs.mjs";
 import { resolveWorkspaceRoot } from "./lib/workspace.mjs";
+import os from "node:os";
+import { repoFingerprint } from "./lib/runes-fingerprint.mjs";
 
 const STOP_REVIEW_TIMEOUT_MS = 15 * 60 * 1000;
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -141,6 +143,29 @@ function runStopReview(cwd, input = {}) {
   }
 }
 
+/* Fork delta: the no-change fast path. A stop whose tree is byte-identical
+   to the last ALLOWed stop of this session has already been reviewed, and
+   re-reviewing it costs a full Codex task for no new information. */
+function fingerprintFile(sessionId) {
+  return path.join(os.tmpdir(), `codex-stop-gate-fp-${sessionId || "nosession"}`);
+}
+
+function readLastApprovedFingerprint(file) {
+  try {
+    return fs.readFileSync(file, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+function rememberApprovedFingerprint(file, fingerprint) {
+  try {
+    fs.writeFileSync(file, fingerprint);
+  } catch {
+    /* Losing the record costs one redundant review, never a skipped one. */
+  }
+}
+
 function main() {
   const input = readHookInput();
   const cwd = input.cwd || process.env.CLAUDE_PROJECT_DIR || process.cwd();
@@ -165,7 +190,20 @@ function main() {
     return;
   }
 
+  const fingerprint = repoFingerprint(cwd);
+  const fingerprintPath = fingerprintFile(input.session_id);
+  if (fingerprint && fingerprint === readLastApprovedFingerprint(fingerprintPath)) {
+    logNote("Codex stop-gate review skipped: nothing changed since the last approved stop.");
+    logNote(runningTaskNote);
+    return;
+  }
+
   const review = runStopReview(cwd, input);
+  /* Only an ALLOW arms the fast path: a blocked state must be re-reviewed
+     on the next stop, however little the tree moved in between. */
+  if (review.ok && fingerprint) {
+    rememberApprovedFingerprint(fingerprintPath, fingerprint);
+  }
   if (!review.ok) {
     emitDecision({
       decision: "block",
