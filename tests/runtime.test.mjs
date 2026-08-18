@@ -2069,6 +2069,37 @@ test("stop hook re-reviews an unchanged tree when the previous stop was blocked"
   assert.notEqual(afterSecond, afterFirst, "a blocked stop must not arm the fast path");
 });
 
+test("stop hook re-reviews when the tree cannot be fingerprinted", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  const fakeStatePath = path.join(binDir, "fake-codex-state.json");
+  installFakeCodex(binDir, "adversarial-clean");
+  /* A repository with no commits: `git rev-parse HEAD` fails, so there is
+     no fingerprint. The absence of a fingerprint must never be mistaken
+     for "matches the absent record" and skip the review. */
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+
+  const setup = run("node", [SCRIPT, "setup", "--enable-review-gate", "--json"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+  assert.equal(setup.status, 0, setup.stderr);
+
+  const hookInput = JSON.stringify({ cwd: repo, session_id: "sess-stop-nofp" });
+
+  const first = run("node", [STOP_HOOK], { cwd: repo, env: buildEnv(binDir), input: hookInput });
+  assert.equal(first.status, 0, first.stderr);
+  const afterFirst = JSON.parse(fs.readFileSync(fakeStatePath, "utf8")).lastTurnStart.turnId;
+
+  const second = run("node", [STOP_HOOK], { cwd: repo, env: buildEnv(binDir), input: hookInput });
+  assert.equal(second.status, 0, second.stderr);
+  const afterSecond = JSON.parse(fs.readFileSync(fakeStatePath, "utf8")).lastTurnStart.turnId;
+
+  assert.notEqual(afterSecond, afterFirst, "an unfingerprintable tree must be reviewed every time");
+  assert.doesNotMatch(second.stderr, /skipped: nothing changed/i);
+});
+
 test("stop hook logs running tasks to stderr without blocking when the review gate is disabled", () => {
   const repo = makeTempDir();
   initGitRepo(repo);
