@@ -2008,6 +2008,67 @@ test("stop hook forwards every finding of a multi-finding BLOCK, not just the fi
   assert.match(payload.reason, /retry budget in src\/net\.js:88/i);
 });
 
+test("stop hook skips the Codex review when nothing changed since the last allowed stop", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  const fakeStatePath = path.join(binDir, "fake-codex-state.json");
+  installFakeCodex(binDir, "adversarial-clean");
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+  run("git", ["add", "README.md"], { cwd: repo });
+  run("git", ["commit", "-m", "init"], { cwd: repo });
+
+  const setup = run("node", [SCRIPT, "setup", "--enable-review-gate", "--json"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+  assert.equal(setup.status, 0, setup.stderr);
+
+  const hookInput = JSON.stringify({ cwd: repo, session_id: "sess-stop-fastpath" });
+
+  const first = run("node", [STOP_HOOK], { cwd: repo, env: buildEnv(binDir), input: hookInput });
+  assert.equal(first.status, 0, first.stderr);
+  assert.equal(first.stdout.trim(), "", "a clean review allows the stop");
+  const afterFirst = JSON.parse(fs.readFileSync(fakeStatePath, "utf8")).lastTurnStart.turnId;
+
+  const second = run("node", [STOP_HOOK], { cwd: repo, env: buildEnv(binDir), input: hookInput });
+  assert.equal(second.status, 0, second.stderr);
+  assert.equal(second.stdout.trim(), "", "a skipped review still allows the stop");
+
+  const afterSecond = JSON.parse(fs.readFileSync(fakeStatePath, "utf8")).lastTurnStart.turnId;
+  assert.equal(afterSecond, afterFirst, "an unchanged tree must not drive Codex a second time");
+  assert.match(second.stderr, /skipped: nothing changed/i);
+});
+
+test("stop hook re-reviews an unchanged tree when the previous stop was blocked", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  const fakeStatePath = path.join(binDir, "fake-codex-state.json");
+  installFakeCodex(binDir, "adversarial-multi");
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+  run("git", ["add", "README.md"], { cwd: repo });
+  run("git", ["commit", "-m", "init"], { cwd: repo });
+
+  const setup = run("node", [SCRIPT, "setup", "--enable-review-gate", "--json"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+  assert.equal(setup.status, 0, setup.stderr);
+
+  const hookInput = JSON.stringify({ cwd: repo, session_id: "sess-stop-blocked" });
+
+  const first = run("node", [STOP_HOOK], { cwd: repo, env: buildEnv(binDir), input: hookInput });
+  assert.equal(JSON.parse(first.stdout).decision, "block");
+  const afterFirst = JSON.parse(fs.readFileSync(fakeStatePath, "utf8")).lastTurnStart.turnId;
+
+  const second = run("node", [STOP_HOOK], { cwd: repo, env: buildEnv(binDir), input: hookInput });
+  assert.equal(JSON.parse(second.stdout).decision, "block", "a blocked state must stay blocked");
+
+  const afterSecond = JSON.parse(fs.readFileSync(fakeStatePath, "utf8")).lastTurnStart.turnId;
+  assert.notEqual(afterSecond, afterFirst, "a blocked stop must not arm the fast path");
+});
+
 test("stop hook logs running tasks to stderr without blocking when the review gate is disabled", () => {
   const repo = makeTempDir();
   initGitRepo(repo);
