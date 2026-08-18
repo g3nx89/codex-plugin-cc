@@ -2100,6 +2100,43 @@ test("stop hook re-reviews when the tree cannot be fingerprinted", () => {
   assert.doesNotMatch(second.stderr, /skipped: nothing changed/i);
 });
 
+test("stop hook sees untracked files outside its invocation subdirectory", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  const fakeStatePath = path.join(binDir, "fake-codex-state.json");
+  installFakeCodex(binDir, "adversarial-clean");
+  initGitRepo(repo);
+  fs.mkdirSync(path.join(repo, "nested"));
+  fs.writeFileSync(path.join(repo, "nested", "app.js"), "hello\n");
+  run("git", ["add", "."], { cwd: repo });
+  run("git", ["commit", "-m", "init"], { cwd: repo });
+
+  const setup = run("node", [SCRIPT, "setup", "--enable-review-gate", "--json"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+  assert.equal(setup.status, 0, setup.stderr);
+
+  /* Claude launched below the repository root. `git ls-files --others` is
+     scoped to the directory it runs in, so a fingerprint taken from here
+     cannot see untracked files anywhere else in the repository. */
+  const nested = path.join(repo, "nested");
+  const hookInput = JSON.stringify({ cwd: nested, session_id: "sess-stop-nested" });
+
+  const first = run("node", [STOP_HOOK], { cwd: nested, env: buildEnv(binDir), input: hookInput });
+  assert.equal(first.status, 0, first.stderr);
+  const afterFirst = JSON.parse(fs.readFileSync(fakeStatePath, "utf8")).lastTurnStart.turnId;
+
+  fs.writeFileSync(path.join(repo, "outside.js"), "new module\n");
+
+  const second = run("node", [STOP_HOOK], { cwd: nested, env: buildEnv(binDir), input: hookInput });
+  assert.equal(second.status, 0, second.stderr);
+  const afterSecond = JSON.parse(fs.readFileSync(fakeStatePath, "utf8")).lastTurnStart.turnId;
+
+  assert.doesNotMatch(second.stderr, /skipped: nothing changed/i);
+  assert.notEqual(afterSecond, afterFirst, "a new untracked file outside the cwd must still be reviewed");
+});
+
 test("stop hook logs running tasks to stderr without blocking when the review gate is disabled", () => {
   const repo = makeTempDir();
   initGitRepo(repo);
