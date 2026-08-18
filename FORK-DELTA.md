@@ -1,0 +1,68 @@
+# Fork delta
+
+This is a fork of [`openai/codex-plugin-cc`](https://github.com/openai/codex-plugin-cc)
+(Apache 2.0). Upstream's `LICENSE` and `NOTICE` are preserved unchanged.
+No pull request upstream is planned: the delta below is maintained here.
+
+**This file is the manifest.** A file that diverges from upstream and is not
+listed here does not belong in the fork. At every upstream merge, this table is
+the checklist.
+
+## Rules this fork is held to
+
+1. **Every divergence traces to a measured cost.** Not "would be useful" — a
+   number, an incident, or a defect that actually happened.
+2. **Additive beats modified.** New logic goes in new files; upstream files are
+   touched only at the minimum point of attachment.
+3. **No drive-by changes.** No restyling upstream code, no fixing parts we do
+   not use, no speculative hardening.
+4. **Everything is covered by the upstream suite**, extended — never bypassed.
+   Each hunk is ablated separately; a hunk no test fails for is given a test or
+   deleted.
+5. **Upstream sync is on request**, not automatic:
+   `git fetch upstream && git merge upstream/main`, rerun the suite, bump the
+   `-runes.N` suffix.
+
+## The delta
+
+| File | Kind | Why | Evidence | Date |
+|---|---|---|---|---|
+| `plugins/codex/scripts/lib/runes-fingerprint.mjs` | **new** | Content-aware repository fingerprint for the no-change fast path. | 9 transitions, each a real skipped review before it was closed; 8 guards ablated separately, all load-bearing | 2026-08-18 |
+| `plugins/codex/scripts/stop-review-gate-hook.mjs` | modified, 3 points | (a) full BLOCK body forwarded instead of the first line; (b) fast-path early return on an unchanged tree; (c) fingerprint recorded only on ALLOW. | (a) 3 of 4 findings hidden at one BLOCK and 5 of 6 at another, 2026-08-17; a manual `jq` recovery on every BLOCK. (b) ~904 gate runs in ~6h over five weeks, most under 10s on a tree already approved. (c) a blocked state must never be waved through. | 2026-08-18 |
+| `tests/runes-fingerprint.test.mjs` | **new** | Fingerprint suite: content, stability, NUL-collision, mode, symlink identity, symlink raw bytes, and both fail-toward-review guards. | 9 tests | 2026-08-18 |
+| `tests/runtime.test.mjs` | modified, additive | Four tests: multi-finding BLOCK forwarded; skip on unchanged tree; re-review after a block; re-review when unfingerprintable. Existing tests untouched. | 91 → 104 tests, all green | 2026-08-18 |
+| `tests/fake-codex-fixture.mjs` | modified, additive | `adversarial-multi` scenario emitting a three-finding BLOCK. Upstream's single-line BLOCK made the truncation invisible to its own suite. | the pre-existing assertion passed with findings 2..N dropped | 2026-08-18 |
+| `package.json`, `package-lock.json`, `.claude-plugin/marketplace.json`, `plugins/codex/.claude-plugin/plugin.json` | version only | `1.0.6-runes.N` marks the local level and invalidates the plugin cache on install. | — | 2026-08-18 |
+
+The marketplace **name** is deliberately left as upstream's `openai-codex`, so
+the derived plugin data directory (`codex-openai-codex`) is unchanged and the
+gate's configuration and job history survive the switch. The fork is identified
+by its `version`, not by a renamed marketplace. Consequence: this marketplace
+replaces upstream's rather than coexisting with it.
+
+## Known boundaries — deliberate, not oversights
+
+- **The fingerprint record is keyed by session id in the system temp
+  directory**, not by workspace. Two workspaces could share a record only via
+  the `"nosession"` fallback *and* at an identical HEAD, diff and untracked set.
+  Left as-is rather than hardened speculatively; revisit if it is ever measured.
+- **The fast path only sees the repository.** A turn that changed nothing inside
+  the working tree — editing files outside it, for instance — fingerprints as
+  unchanged and is skipped. This is the intended trade: the gate reviews the
+  previous turn's *code* changes.
+- **BLOCK detection remains first-line based.** Only the reason body was widened;
+  a payload whose first line is not a verdict behaves exactly as upstream.
+
+## Running the suite here
+
+Claude Code exports `CLAUDE_PLUGIN_DATA` and `CODEX_COMPANION_SESSION_ID` into
+its shells, and both leak into the suite: the first flips `resolveStateDir` to
+the plugin data directory, the second makes `filterJobsForCurrentSession` drop
+every fixture job. Four tests fail on a perfectly healthy checkout. Scrub them:
+
+```sh
+env -u CLAUDE_PLUGIN_DATA -u CODEX_COMPANION_SESSION_ID \
+    -u CODEX_COMPANION_TRANSCRIPT_PATH npm test
+```
+
+CI is unaffected — no such harness there.
