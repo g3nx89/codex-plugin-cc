@@ -28,9 +28,9 @@ the checklist.
 | File | Kind | Why | Evidence | Date |
 |---|---|---|---|---|
 | `plugins/codex/scripts/lib/runes-fingerprint.mjs` | **new** | Content-aware repository fingerprint for the no-change fast path. | 9 transitions, each a real skipped review before it was closed; 8 guards ablated separately, all load-bearing | 2026-08-18 |
-| `plugins/codex/scripts/stop-review-gate-hook.mjs` | modified, 3 points | (a) full BLOCK body forwarded instead of the first line; (b) fast-path early return on an unchanged tree; (c) fingerprint recorded only on ALLOW. | (a) 3 of 4 findings hidden at one BLOCK and 5 of 6 at another, 2026-08-17; a manual `jq` recovery on every BLOCK. (b) ~904 gate runs in ~6h over five weeks, most under 10s on a tree already approved. (c) a blocked state must never be waved through. | 2026-08-18 |
+| `plugins/codex/scripts/stop-review-gate-hook.mjs` | modified, 3 points | (a) full BLOCK body forwarded instead of the first line; (b) fast-path early return on an unchanged tree, fingerprinting the **workspace root**; (c) fingerprint recorded only on ALLOW. | (a) 3 of 4 findings hidden at one BLOCK and 5 of 6 at another, 2026-08-17; a manual `jq` recovery on every BLOCK. (b) ~904 gate runs in ~6h over five weeks, most under 10s on a tree already approved. (c) a blocked state must never be waved through. | 2026-08-18 |
 | `tests/runes-fingerprint.test.mjs` | **new** | Fingerprint suite: content, stability, NUL-collision, mode, symlink identity, symlink raw bytes, and both fail-toward-review guards. | 9 tests | 2026-08-18 |
-| `tests/runtime.test.mjs` | modified, additive | Four tests: multi-finding BLOCK forwarded; skip on unchanged tree; re-review after a block; re-review when unfingerprintable. Existing tests untouched. | 91 → 104 tests, all green | 2026-08-18 |
+| `tests/runtime.test.mjs` | modified, additive | Five tests: multi-finding BLOCK forwarded; skip on unchanged tree; re-review after a block; re-review when unfingerprintable; untracked files outside the invocation directory still seen. Existing tests untouched. | 91 → 105 tests, all green | 2026-08-18 |
 | `tests/fake-codex-fixture.mjs` | modified, additive | `adversarial-multi` scenario emitting a three-finding BLOCK. Upstream's single-line BLOCK made the truncation invisible to its own suite. | the pre-existing assertion passed with findings 2..N dropped | 2026-08-18 |
 | `package.json`, `package-lock.json`, `.claude-plugin/marketplace.json`, `plugins/codex/.claude-plugin/plugin.json` | version only | `1.0.6-runes.N` marks the local level and invalidates the plugin cache on install. | — | 2026-08-18 |
 
@@ -49,7 +49,11 @@ replaces upstream's rather than coexisting with it.
 - **The fast path only sees the repository.** A turn that changed nothing inside
   the working tree — editing files outside it, for instance — fingerprints as
   unchanged and is skipped. This is the intended trade: the gate reviews the
-  previous turn's *code* changes.
+  previous turn's *code* changes. The fingerprint is taken from the workspace
+  ROOT, so the whole repository is in scope regardless of where the session was
+  launched: of the three git commands it runs, `git ls-files --others` is scoped
+  to its working directory (5 files from the root, 0 from `app/`), while
+  `rev-parse` and `diff HEAD` are repository-wide.
 - **BLOCK detection remains first-line based.** Only the reason body was widened;
   a payload whose first line is not a verdict behaves exactly as upstream.
 
