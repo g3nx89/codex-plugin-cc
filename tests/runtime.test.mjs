@@ -1979,6 +1979,35 @@ test("stop hook runs a stop-time review task and blocks on findings when the rev
   assert.match(status.stdout, /Codex Stop Gate Review/);
 });
 
+test("stop hook forwards every finding of a multi-finding BLOCK, not just the first line", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir, "adversarial-multi");
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+  run("git", ["add", "README.md"], { cwd: repo });
+  run("git", ["commit", "-m", "init"], { cwd: repo });
+
+  const setup = run("node", [SCRIPT, "setup", "--enable-review-gate", "--json"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+  assert.equal(setup.status, 0, setup.stderr);
+
+  const blocked = run("node", [STOP_HOOK], {
+    cwd: repo,
+    env: buildEnv(binDir),
+    input: JSON.stringify({ cwd: repo, session_id: "sess-stop-multi" })
+  });
+
+  assert.equal(blocked.status, 0, blocked.stderr);
+  const payload = JSON.parse(blocked.stdout);
+  assert.equal(payload.decision, "block");
+  assert.match(payload.reason, /Missing empty-state guard/i);
+  assert.match(payload.reason, /Unchecked cast in src\/parse\.js:22/i);
+  assert.match(payload.reason, /retry budget in src\/net\.js:88/i);
+});
+
 test("stop hook logs running tasks to stderr without blocking when the review gate is disabled", () => {
   const repo = makeTempDir();
   initGitRepo(repo);

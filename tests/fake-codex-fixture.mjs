@@ -237,6 +237,9 @@ function taskPayload(prompt, resume) {
     if (BEHAVIOR === "adversarial-clean") {
       return "ALLOW: No blocking issues found in the previous turn.";
     }
+    if (BEHAVIOR === "adversarial-multi") {
+      return "BLOCK: Missing empty-state guard in src/app.js:4-6.\\n\\n2. Unchecked cast in src/parse.js:22 drops the error branch.\\n3. The retry budget in src/net.js:88 is never reset.";
+    }
     return "BLOCK: Missing empty-state guard in src/app.js:4-6.";
   }
 
