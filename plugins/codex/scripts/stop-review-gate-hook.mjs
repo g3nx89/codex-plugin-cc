@@ -81,7 +81,9 @@ function parseStopReviewOutput(rawOutput) {
     return { ok: true, reason: null };
   }
   if (firstLine.startsWith("BLOCK:")) {
-    const reason = firstLine.slice("BLOCK:".length).trim() || text;
+    /* Fork delta: the FULL body, not just the first line — a BLOCK
+       enumerates every finding and the transport must not drop 2..N. */
+    const reason = text.slice("BLOCK:".length).trim() || text;
     return {
       ok: false,
       reason: `Codex stop-time review found issues that still need fixes before ending the session: ${reason}`
