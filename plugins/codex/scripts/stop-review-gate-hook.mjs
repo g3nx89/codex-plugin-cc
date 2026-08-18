@@ -190,7 +190,10 @@ function main() {
     return;
   }
 
-  const fingerprint = repoFingerprint(cwd);
+  /* The workspace ROOT, not the invocation directory: `git ls-files
+     --others` is scoped to the directory it runs in, so fingerprinting a
+     subdirectory would miss untracked files created anywhere else. */
+  const fingerprint = repoFingerprint(workspaceRoot);
   const fingerprintPath = fingerprintFile(input.session_id);
   if (fingerprint && fingerprint === readLastApprovedFingerprint(fingerprintPath)) {
     logNote("Codex stop-gate review skipped: nothing changed since the last approved stop.");
