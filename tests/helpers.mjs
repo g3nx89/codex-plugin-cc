@@ -4,8 +4,32 @@ import path from "node:path";
 import process from "node:process";
 import { spawnSync } from "node:child_process";
 
+import {
+  clearBrokerSession,
+  loadBrokerSession,
+  teardownBrokerSession
+} from "../plugins/codex/scripts/lib/broker-lifecycle.mjs";
+
+const brokerWorkspaces = [];
+
+// node --test never runs the SessionEnd hook, so brokers the runtime starts
+// for a temp workspace would outlive the suite. Reap them when the test
+// process exits.
+process.on("exit", () => {
+  for (const workspace of brokerWorkspaces) {
+    const session = loadBrokerSession(workspace);
+    if (!session) {
+      continue;
+    }
+    teardownBrokerSession(session);
+    clearBrokerSession(workspace);
+  }
+});
+
 export function makeTempDir(prefix = "codex-plugin-test-") {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  brokerWorkspaces.push(dir);
+  return dir;
 }
 
 export function writeExecutable(filePath, source) {
