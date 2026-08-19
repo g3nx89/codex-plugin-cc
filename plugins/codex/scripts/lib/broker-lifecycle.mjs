@@ -6,6 +6,7 @@ import process from "node:process";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createBrokerEndpoint, parseBrokerEndpoint } from "./broker-endpoint.mjs";
+import { terminateProcessTree } from "./process.mjs";
 import { resolveStateDir } from "./state.mjs";
 
 export const PID_FILE_ENV = "CODEX_COMPANION_APP_SERVER_PID_FILE";
@@ -171,9 +172,10 @@ export async function ensureBrokerSession(cwd, options = {}) {
 }
 
 export function teardownBrokerSession({ endpoint = null, pidFile, logFile, sessionDir = null, pid = null, killProcess = null }) {
-  if (Number.isFinite(pid) && killProcess) {
+  const terminate = killProcess ?? terminateProcessTree;
+  if (Number.isFinite(pid)) {
     try {
-      killProcess(pid);
+      terminate(pid);
     } catch {
       // Ignore missing or already-exited broker processes.
     }
