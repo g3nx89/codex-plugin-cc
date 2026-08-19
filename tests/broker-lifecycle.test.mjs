@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 
 import { teardownBrokerSession } from "../plugins/codex/scripts/lib/broker-lifecycle.mjs";
 
@@ -56,5 +56,42 @@ test("teardownBrokerSession terminates the broker when the caller passes no kill
       // Already gone.
     }
     fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});
+
+test("the test harness terminates brokers recorded for its temp dirs when the process exits", async () => {
+  const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-broker-stateroot-"));
+  const child = spawnDetachedSleeper();
+
+  const helpersUrl = new URL("./helpers.mjs", import.meta.url).href;
+  const lifecycleUrl = new URL("../plugins/codex/scripts/lib/broker-lifecycle.mjs", import.meta.url).href;
+  const source = [
+    `import { makeTempDir } from ${JSON.stringify(helpersUrl)};`,
+    `import { saveBrokerSession } from ${JSON.stringify(lifecycleUrl)};`,
+    `const dir = makeTempDir();`,
+    `saveBrokerSession(dir, { endpoint: null, pidFile: null, logFile: null, sessionDir: null, pid: ${child.pid} });`
+  ].join("\n");
+
+  try {
+    assert.doesNotThrow(() => process.kill(child.pid, 0), "stand-in broker failed to start");
+
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", source], {
+      encoding: "utf8",
+      env: { ...process.env, CLAUDE_PLUGIN_DATA: stateRoot }
+    });
+    assert.equal(result.status, 0, `harness child failed: ${result.stderr}`);
+
+    assert.equal(
+      await waitForExit(child),
+      true,
+      "the harness exited leaving the broker it recorded still running"
+    );
+  } finally {
+    try {
+      process.kill(-child.pid, "SIGKILL");
+    } catch {
+      // Already gone.
+    }
+    fs.rmSync(stateRoot, { recursive: true, force: true });
   }
 });
