@@ -10,25 +10,25 @@ import {
   teardownBrokerSession
 } from "../plugins/codex/scripts/lib/broker-lifecycle.mjs";
 
-const brokerWorkspaces = [];
+const tempWorkspaces = [];
 
 // node --test never runs the SessionEnd hook, so brokers the runtime starts
-// for a temp workspace would outlive the suite. Reap them when the test
-// process exits.
+// for a temp workspace would outlive the suite, and /tmp is tmpfs on Linux
+// so abandoned workspaces are RAM. Reap both when the test process exits.
 process.on("exit", () => {
-  for (const workspace of brokerWorkspaces) {
+  for (const workspace of tempWorkspaces) {
     const session = loadBrokerSession(workspace);
-    if (!session) {
-      continue;
+    if (session) {
+      teardownBrokerSession(session);
+      clearBrokerSession(workspace);
     }
-    teardownBrokerSession(session);
-    clearBrokerSession(workspace);
+    fs.rmSync(workspace, { recursive: true, force: true });
   }
 });
 
 export function makeTempDir(prefix = "codex-plugin-test-") {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  brokerWorkspaces.push(dir);
+  tempWorkspaces.push(dir);
   return dir;
 }
 
