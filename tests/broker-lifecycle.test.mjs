@@ -95,3 +95,32 @@ test("the test harness terminates brokers recorded for its temp dirs when the pr
     fs.rmSync(stateRoot, { recursive: true, force: true });
   }
 });
+
+test("the test harness removes the temp workspaces it handed out when the process exits", () => {
+  const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-broker-stateroot-"));
+  const helpersUrl = new URL("./helpers.mjs", import.meta.url).href;
+  const source = [
+    `import fs from "node:fs";`,
+    `import { makeTempDir } from ${JSON.stringify(helpersUrl)};`,
+    `const dir = makeTempDir();`,
+    `process.stdout.write(`,
+    "  `${dir}|${fs.existsSync(dir)}`",
+    `);`
+  ].join("\n");
+
+  try {
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", source], {
+      encoding: "utf8",
+      env: { ...process.env, CLAUDE_PLUGIN_DATA: stateRoot }
+    });
+    assert.equal(result.status, 0, `harness child failed: ${result.stderr}`);
+
+    const [dir, existedInChild] = result.stdout.trim().split("|");
+    // Precondition: the workspace really existed while the harness was alive.
+    assert.equal(existedInChild, "true", "makeTempDir did not create the workspace");
+
+    assert.equal(fs.existsSync(dir), false, "the harness left its temp workspace behind");
+  } finally {
+    fs.rmSync(stateRoot, { recursive: true, force: true });
+  }
+});
